@@ -1,9 +1,15 @@
 'use client';
 import { Textarea } from '@/components/ui/textarea';
-import { useEffect, useState, useRef } from 'react';
-import { convertJavaToJS, convertJSToJava } from './helper';
+import { useEffect, useState } from 'react';
+import { convertJavaToJS, convertJSToJava, migrateOldFormat } from './helper';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+
+const createGrid = (h, w) => {
+  return Array(Number.parseInt(h))
+    .fill()
+    .map(() => Array(Number.parseInt(w)).fill({ r: 0, g: 0, b: 0, a: 0 }));
+};
 
 export default function Home() {
   const [height, setHeight] = useState(20);
@@ -13,21 +19,26 @@ export default function Home() {
   const [grid, setGrid] = useState(() => createGrid(height, width));
   const [javaString, setJavaString] = useState('');
   const [error, setError] = useState('');
+  const [currentColor, setCurrentColor] = useState('#000000');
+  const [opacity, setOpacity] = useState(100);
+  const [oldFormatInput, setOldFormatInput] = useState('');
 
-  function createGrid(h, w) {
-    return Array(parseInt(h))
-      .fill()
-      .map(() => Array(parseInt(w)).fill(0));
-  }
+  const hexToRgba = (hex, alpha = 255) => {
+    const r = Number.parseInt(hex.slice(1, 3), 16);
+    const g = Number.parseInt(hex.slice(3, 5), 16);
+    const b = Number.parseInt(hex.slice(5, 7), 16);
+    return { r, g, b, a: alpha };
+  };
 
   const setGridSquare = (row, col) => {
     if (!isDrawing && !isMouseDown) return;
 
     const newGrid = grid.map((row) => [...row]);
     if (mode === 'erase') {
-      newGrid[row][col] = 0;
+      newGrid[row][col] = { r: 0, g: 0, b: 0, a: 0 };
     } else {
-      newGrid[row][col] = 1;
+      const rgbaColor = hexToRgba(currentColor, Math.round(opacity * 2.55));
+      newGrid[row][col] = rgbaColor;
     }
     setGrid(newGrid);
   };
@@ -60,8 +71,8 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    setGrid(createGrid(parseInt(height), parseInt(width)));
-  }, [height, width]);
+    setGrid(createGrid(Number.parseInt(height), Number.parseInt(width)));
+  }, [height, width, createGrid]);
 
   const importJavaString = () => {
     try {
@@ -93,6 +104,42 @@ export default function Home() {
     setGrid(createGrid(height, width));
   };
 
+  const migrateOld = () => {
+    try {
+      if (!oldFormatInput.trim()) {
+        setError('Please enter old format data to migrate');
+        return;
+      }
+
+      const newGrid = migrateOldFormat(oldFormatInput);
+
+      setHeight(newGrid.length);
+      setWidth(newGrid[0].length);
+      setTimeout(() => {
+        setGrid(newGrid);
+      }, 0);
+      setError('');
+    } catch (e) {
+      setError(e.message || 'Error migrating old format');
+    }
+  };
+
+  const getPixelStyle = (pixel) => {
+    if (pixel.a === 0) {
+      return {
+        backgroundImage:
+          'linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)',
+        backgroundSize: '10px 10px',
+        backgroundPosition: '0 0, 0 5px, 5px -5px, -5px 0px',
+      };
+    }
+    return {
+      backgroundColor: `rgba(${pixel.r}, ${pixel.g}, ${pixel.b}, ${
+        pixel.a / 255
+      })`,
+    };
+  };
+
   return (
     <div className="w-full max-w-[800px]">
       <div className="flex gap-2 mb-4">
@@ -113,6 +160,31 @@ export default function Home() {
         </Button>
       </div>
 
+      <div className="flex items-center gap-4 mb-4">
+        <div className="flex items-center gap-2">
+          <label htmlFor="color-picker">Color:</label>
+          <Input
+            id="color-picker"
+            type="color"
+            value={currentColor}
+            onChange={(e) => setCurrentColor(e.target.value)}
+            className="w-16 h-10 p-1"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <label htmlFor="opacity">Opacity: {opacity}%</label>
+          <Input
+            id="opacity"
+            type="range"
+            min="0"
+            max="100"
+            value={opacity}
+            onChange={(e) => setOpacity(Number.parseInt(e.target.value))}
+            className="w-32"
+          />
+        </div>
+      </div>
+
       <div className="mb-4 border border-gray-300 p-2 overflow-auto">
         <div
           className="grid gap-0 w-max select-none"
@@ -125,10 +197,10 @@ export default function Home() {
           onMouseUp={handleMouseUp}
         >
           {grid.map((rows, rowIndex) => {
-            return rows.map((col, colIndex) => (
+            return rows.map((pixel, colIndex) => (
               <div
                 key={`row-${rowIndex}-col-${colIndex}`}
-                style={{ backgroundColor: col === 0 ? 'white' : 'black' }}
+                style={getPixelStyle(pixel)}
                 className="border border-gray-300 w-[25px] h-[25px] cursor-pointer"
                 onMouseDown={() => setGridSquare(rowIndex, colIndex)}
                 onMouseOver={() => setGridSquare(rowIndex, colIndex)}
@@ -144,7 +216,7 @@ export default function Home() {
           <Input
             type="number"
             value={width}
-            onChange={(e) => setWidth(parseInt(e.target.value) || 1)}
+            onChange={(e) => setWidth(Number.parseInt(e.target.value) || 1)}
             className="w-20"
             min="1"
           />
@@ -154,11 +226,24 @@ export default function Home() {
           <Input
             type="number"
             value={height}
-            onChange={(e) => setHeight(parseInt(e.target.value) || 1)}
+            onChange={(e) => setHeight(Number.parseInt(e.target.value) || 1)}
             className="w-20"
             min="1"
           />
         </div>
+      </div>
+
+      <div className="my-4">
+        <label className="block mb-2">Old Format (0s and 1s):</label>
+        <Textarea
+          value={oldFormatInput}
+          onChange={(e) => setOldFormatInput(e.target.value)}
+          className="w-full min-h-[100px]"
+          placeholder="Paste your old format here (0s and 1s)"
+        />
+        <Button onClick={migrateOld} className="mt-2">
+          Migrate Old Format
+        </Button>
       </div>
 
       <div className="my-4">
